@@ -2,10 +2,17 @@ import streamlit as st
 import requests
 import os
 
+# Your Production Backend URL
+BACKEND_URL = "https://financial-rag-analyst.onrender.com"
+
 st.set_page_config(page_title="Financial RAG Analyst", page_icon="📈")
 
 st.title("📈 Financial 10-K Analyst")
 st.markdown("Query your financial documents using **Llama 3.3 on Groq**")
+
+# Ensure the 'data' directory exists for temporary file storage
+if not os.path.exists("data"):
+    os.makedirs("data")
 
 # --- Sidebar: Upload ---
 with st.sidebar:
@@ -20,12 +27,16 @@ with st.sidebar:
                 with open(temp_path, "wb") as f:
                     f.write(uploaded_file.getbuffer())
                 
-                # Call your FastAPI Ingest Endpoint
-                response = requests.post(f"http://127.0.0.1:8000/ingest?file_path={temp_path}")
-                if response.status_code == 200:
-                    st.success("Document Ingested Successfully!")
-                else:
-                    st.error("Error during ingestion.")
+                # Call your LIVE Render Ingest Endpoint
+                # Note: Passing as a query parameter exactly like your FastAPI setup expects
+                try:
+                    response = requests.post(f"{BACKEND_URL}/ingest?file_path={temp_path}")
+                    if response.status_code == 200:
+                        st.success("Document Ingested Successfully!")
+                    else:
+                        st.error(f"Error during ingestion: {response.text}")
+                except Exception as e:
+                    st.error(f"Could not connect to backend: {e}")
         else:
             st.warning("Please upload a PDF first.")
 
@@ -45,29 +56,33 @@ if prompt := st.chat_input("Ask about the 10-K (e.g., 'What are the legal risks?
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # Call FastAPI Ask Endpoint
+    # Call LIVE Render Ask Endpoint
     with st.chat_message("assistant"):
         with st.spinner("Analyzing..."):
             try:
                 response = requests.post(
-                    "http://127.0.0.1:8000/ask",
+                    f"{BACKEND_URL}/ask",
                     json={"question": prompt}
                 )
-                data = response.json()
                 
-                answer = data.get("answer", "No answer received.")
-                sources = data.get("sources", [])
-                
-                # Display Answer
-                st.markdown(answer)
-                
-                # Display Sources in an accordion
-                if sources:
-                    with st.expander("View Sources"):
-                        for source in sources:
-                            st.write(f"📄 {source}")
-                
-                st.session_state.messages.append({"role": "assistant", "content": answer})
+                if response.status_code == 200:
+                    data = response.json()
+                    
+                    answer = data.get("answer", "No answer received.")
+                    sources = data.get("sources", [])
+                    
+                    # Display Answer
+                    st.markdown(answer)
+                    
+                    # Display Sources in an accordion
+                    if sources:
+                        with st.expander("View Sources"):
+                            for source in sources:
+                                st.write(f"📄 {source}")
+                    
+                    st.session_state.messages.append({"role": "assistant", "content": answer})
+                else:
+                    st.error(f"Backend returned an error: {response.status_code}")
                 
             except Exception as e:
                 st.error(f"Failed to connect to Backend: {e}")
