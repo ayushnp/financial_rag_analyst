@@ -1,6 +1,8 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 from src.rag_engine import answer_financial_question, ingest_financial_document
+import os
+import uvicorn
 
 app = FastAPI(title="Financial RAG Analyst")
 
