@@ -7,7 +7,7 @@ BACKEND_URL = "https://financial-rag-analyst.onrender.com"
 
 st.set_page_config(page_title="DeepAudit.ai", page_icon="📈")
 
-st.title("📈 Financial 10-K Analyst")
+st.title("📈 DeepAudit.ai")
 st.markdown("Query your financial documents using **Llama 3.3 on Groq**")
 
 # Ensure the 'data' directory exists for temporary file storage
