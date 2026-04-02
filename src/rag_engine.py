@@ -1,35 +1,56 @@
 import os
-import voyageai
+import cohere
 from groq import Groq
 from src.document_processor import process_document
 from src.supabase_client import supabase, insert_document_chunks
 
-# 1. Initialize Voyage AI (Weightless Embeddings)
-vo = voyageai.Client(api_key=os.getenv("VOYAGE_API_KEY"))
+# 1. Initialize Cohere (Trial Key - 1024 dimensions)
+co = cohere.Client(os.getenv("COHERE_API_KEY"))
 
 # 2. Initialize Groq Client
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 def ingest_financial_document(file_path: str):
-    """Read -> Chunk -> Vectorize via API -> Upload."""
+    """Read -> Chunk -> Vectorize via Cohere API -> Upload."""
     chunks = process_document(file_path)
     
-    print(f"Generating high-fidelity vectors for {len(chunks)} chunks via Voyage AI...")
+    print(f"Generating high-fidelity vectors for {len(chunks)} chunks via Cohere...")
     
-    # Using 'voyage-3' which is state-of-the-art for retrieval
-    # Note: Voyage handles batches automatically
-    embeddings = vo.embed(chunks, model="voyage-3", input_type="document").embeddings
+    all_embeddings = []
+    # Cohere trial keys handle up to 96 texts per request. We'll use a safe batch of 90.
+    batch_size = 90 
     
+    for i in range(0, len(chunks), batch_size):
+        batch = chunks[i : i + batch_size]
+        
+        # embed-english-v3.0 is optimized for RAG retrieval
+        response = co.embed(
+            texts=batch,
+            model="embed-english-v3.0",
+            input_type="search_document", # Context chunks are 'search_document'
+            embedding_types=["float"]
+        )
+        all_embeddings.extend(response.embeddings.float)
+        print(f"Processed {min(i + batch_size, len(chunks))}/{len(chunks)} chunks...")
+
     document_name = os.path.basename(file_path)
-    insert_document_chunks(document_name, chunks, embeddings)
+    
+    # Upload to Supabase
+    insert_document_chunks(document_name, chunks, all_embeddings)
     
     print(f"🚀 Ingestion Complete for: {document_name}")
 
 def answer_financial_question(question: str):
-    """The Hybrid RAG Pipeline: Voyage Math + Groq Reasoning."""
+    """The Hybrid RAG Pipeline: Cohere Math + Groq Reasoning."""
     
-    # A. Vectorize question via API
-    query_vector = vo.embed([question], model="voyage-3", input_type="query").embeddings[0]
+    # A. Vectorize question via Cohere API
+    query_response = co.embed(
+        texts=[question],
+        model="embed-english-v3.0",
+        input_type="search_query", # Questions are 'search_query'
+        embedding_types=["float"]
+    )
+    query_vector = query_response.embeddings.float[0]
 
     # B. Vector Search in Supabase
     try:
@@ -46,10 +67,10 @@ def answer_financial_question(question: str):
     context_text = "\n\n".join(context_chunks)
 
     if not context_text:
-        return {"answer": "I couldn't find any relevant information.", "sources": []}
+        return {"answer": "I couldn't find any relevant information in the 10-K.", "sources": []}
 
-    # C. Cloud Reasoning with Groq
-    print(f"Asking Groq (Llama 3.3 70B)...")
+    # C. Cloud Reasoning with Groq (Llama 3.3 70B)
+    print(f"Asking Groq for financial analysis...")
     try:
         chat_completion = client.chat.completions.create(
             messages=[

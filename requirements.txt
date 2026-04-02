@@ -6,7 +6,7 @@ python-multipart
 
 # AI & Embeddings (Weightless Strategy)
 groq==1.1.2
-voyageai
+cohere
 
 # Database
 supabase==2.28.3
