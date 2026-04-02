@@ -1,39 +1,37 @@
 import os
+import voyageai
 from groq import Groq
-from sentence_transformers import SentenceTransformer
 from src.document_processor import process_document
 from src.supabase_client import supabase, insert_document_chunks
 
-# 1. Setup Local Embedding Model
-print("Loading Local AI Embedding Model (all-MiniLM-L6-v2)...")
-embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+# 1. Initialize Voyage AI (Weightless Embeddings)
+vo = voyageai.Client(api_key=os.getenv("VOYAGE_API_KEY"))
 
 # 2. Initialize Groq Client
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 def ingest_financial_document(file_path: str):
-    """The master pipeline: Read -> Chunk -> Vectorize -> Upload."""
+    """Read -> Chunk -> Vectorize via API -> Upload."""
     chunks = process_document(file_path)
     
-    print(f"Generating vectors for {len(chunks)} chunks...")
-    embeddings = embedding_model.encode(chunks).tolist() 
+    print(f"Generating high-fidelity vectors for {len(chunks)} chunks via Voyage AI...")
     
-    # Extract the filename from the path
+    # Using 'voyage-3' which is state-of-the-art for retrieval
+    # Note: Voyage handles batches automatically
+    embeddings = vo.embed(chunks, model="voyage-3", input_type="document").embeddings
+    
     document_name = os.path.basename(file_path)
-    
-    # Upload to Supabase
     insert_document_chunks(document_name, chunks, embeddings)
     
-    # FIXED: Using the correct variable name for the success message
     print(f"🚀 Ingestion Complete for: {document_name}")
 
 def answer_financial_question(question: str):
-    """The Hybrid RAG Pipeline: Local Math + Groq Reasoning with Metadata."""
+    """The Hybrid RAG Pipeline: Voyage Math + Groq Reasoning."""
     
-    # A. Local Vectorization
-    query_vector = embedding_model.encode(question).tolist()
+    # A. Vectorize question via API
+    query_vector = vo.embed([question], model="voyage-3", input_type="query").embeddings[0]
 
-    # B. Vector Search in Supabase (Retrieving 20 chunks for depth)
+    # B. Vector Search in Supabase
     try:
         response = supabase.rpc("match_documents", {
             "query_embedding": query_vector,
@@ -43,16 +41,15 @@ def answer_financial_question(question: str):
     except Exception as e:
         return {"error": f"Database Error: {str(e)}"}
 
-    # Extract chunks and find unique sources
     context_chunks = [item['chunk_text'] for item in response.data]
     sources = list(set([item.get('document_name', 'Unknown') for item in response.data]))
     context_text = "\n\n".join(context_chunks)
 
     if not context_text:
-        return {"answer": "I couldn't find any relevant information in the document.", "sources": []}
+        return {"answer": "I couldn't find any relevant information.", "sources": []}
 
     # C. Cloud Reasoning with Groq
-    print(f"Asking Groq (Llama 3.3 70B) with {len(context_chunks)} chunks...")
+    print(f"Asking Groq (Llama 3.3 70B)...")
     try:
         chat_completion = client.chat.completions.create(
             messages=[
@@ -60,19 +57,13 @@ def answer_financial_question(question: str):
                     "role": "system",
                     "content": """
                     You are a Senior Equity Research Analyst. 
-                    Your goal is to provide a High-Fidelity Financial Report based on the provided 10-K context.
+                    Your goal is to provide a High-Fidelity Financial Report.
                     
                     STYLE GUIDE:
-                    1. Use Markdown Tables for all year-over-year (YoY) comparisons.
-                    2. Use Bold Headers (###) for distinct sections like Revenue, Segments, and Risks.
-                    3. Use Bullet Points for lists of specific items (e.g., Acquisitions or Geographic data).
-                    4. If a specific dollar amount ($) exists, ALWAYS include it. 
-                    5. Add a '💡 Analyst Commentary' section at the end with a 1-sentence strategic insight.
-                    
-                    STRICT RULES:
-                    - If data is missing for a specific field, do not make it up; omit the section.
-                    - Ensure clean spacing between sections using '---' horizontal rules.
-                    - Format numbers clearly (e.g., $402.8B instead of 402836000000).
+                    1. Use Markdown Tables for YoY comparisons.
+                    2. Use Bold Headers (###) for Revenue, Segments, and Risks.
+                    3. Format numbers clearly (e.g., $402.8B).
+                    4. Add a '💡 Analyst Commentary' section at the end.
                     """
                 },
                 {
@@ -89,6 +80,5 @@ def answer_financial_question(question: str):
             "sources": sources,
             "chunk_count": len(context_chunks)
         }
-
     except Exception as e:
         return {"error": f"Groq API Error: {str(e)}"}
