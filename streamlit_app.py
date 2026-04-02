@@ -21,22 +21,20 @@ with st.sidebar:
     
     if st.button("Process Document"):
         if uploaded_file:
-            with st.spinner("Processing..."):
-                # Save temp file
-                temp_path = os.path.join("data", uploaded_file.name)
-                with open(temp_path, "wb") as f:
-                    f.write(uploaded_file.getbuffer())
+            with st.spinner("Uploading and Processing..."):
+                # Prepare the file to be sent over the internet
+                files = {"file": (uploaded_file.name, uploaded_file.getvalue(), "application/pdf")}
                 
-                # Call your LIVE Render Ingest Endpoint
-                # Note: Passing as a query parameter exactly like your FastAPI setup expects
                 try:
-                    response = requests.post(f"{BACKEND_URL}/ingest?file_path={temp_path}")
+                    # Send the actual file data to Render
+                    response = requests.post(f"{BACKEND_URL}/ingest", files=files)
+                    
                     if response.status_code == 200:
                         st.success("Document Ingested Successfully!")
                     else:
-                        st.error(f"Error during ingestion: {response.text}")
+                        st.error(f"Error: {response.text}")
                 except Exception as e:
-                    st.error(f"Could not connect to backend: {e}")
+                    st.error(f"Connection failed: {e}")
         else:
             st.warning("Please upload a PDF first.")
 

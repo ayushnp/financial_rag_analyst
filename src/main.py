@@ -1,8 +1,10 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 from src.rag_engine import answer_financial_question, ingest_financial_document
-import os
 import uvicorn
+from fastapi import FastAPI, UploadFile, File 
+import shutil
+import os
 
 app = FastAPI(title="Financial RAG Analyst")
 
@@ -22,9 +24,19 @@ def ask_question(request: QueryRequest):
 
 # This allows you to upload new PDFs via API later
 @app.post("/ingest")
-def ingest_file(file_path: str):
+async def ingest_file(file: UploadFile = File(...)):
+    # 1. Create data directory if it doesn't exist
+    os.makedirs("data", exist_ok=True)
+    
+    # 2. Save the uploaded file locally on the Backend server
+    file_path = os.path.join("data", file.filename)
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+    
+    # 3. Process the file now that it actually exists on this server
     ingest_financial_document(file_path)
-    return {"message": f"Successfully ingested {file_path}"}
+    
+    return {"message": f"Successfully processed {file.filename}"}
 
 if __name__ == "__main__":
     # Render provides the port via the PORT environment variable
